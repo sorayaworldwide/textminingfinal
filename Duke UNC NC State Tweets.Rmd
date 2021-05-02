@@ -1,0 +1,124 @@
+---
+title: "Comparing Duke, UNC, and NC State Twitter Activity: A Text Mining Approach"
+date: "`r Sys.Date()`"
+author: "[Soraya Campbell](https://twitter.com/sorayaworldwide)"
+output:
+  rmdformats::downcute:
+    self_contained: true
+    thumbnails: true     
+    lightbox: true     
+    gallery: false     
+    highlight: kate    
+    code_folding: show     
+    code_download: true
+    use_bookdown: true  
+    runtime: shiny 
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=FALSE,
+	             cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+```
+
+```{r, include=FALSE}
+library(tidyverse)
+library(tidyr)
+library(tidytext) 
+library(dplyr)
+library(wordcloud2) 
+library(forcats)
+library(remotes)
+library(ggplot2)
+library(kableExtra)
+library(readxl)
+library(rtweet)
+library(tweetrmd)
+##data
+tmlsyr<-read_xlsx("UniversityTweets.xlsx")
+```
+
+# Twitter activity of Duke, UNC, and NC State
+
+[Duke University](https://twitter.com/DukeU), [NC State University](https://twitter.com/NCState), and [UNC-Chapel Hill](https://twitter.com/UNC) are three [research I universities](https://carnegieclassifications.iu.edu/classification_descriptions/basic.php) in central North Carolina. Together they comprise of the 'Research Triangle,' which together with the [Research Triangle Park](https://www.rtp.org/) and other area universities, drive innovation and growth in the region. While these three universities share the research I university designation, they are distinct in many aspects. Can we discern this distinction by their Twitter activity? What topics do they engage in the most? Are there any overlap?  
+
+**In this walk-through, we'll explore:**    
+* When and how often do each of these accounts tweet  
+* What topics do these accounts engage in this most? Is there is a difference in topics between schools?  
+* What has been the overall sentiment of their tweets? Do certain topics share a similar sentiment?  
+* Which words are more likely to be retweeted or favorited between these accounts?  
+* How similar are the text networks? What distinguishes them?    
+
+Let's find out!
+```{r}
+tweet_embed("https://twitter.com/EshipAtDuke/status/1385567661162213376?s=20") 
+```
+# Getting the Data
+
+Using the `rtweet` package, I pulled the latest 3200 tweets from each university's main twitter account. 
+
+```{r, include=TRUE, echo = TRUE, eval=FALSE}
+##get timelines
+tmls <- get_timelines(c("dukeu", "ncstate", "unc"), n = 3200)
+glimpse(tmls)
+```
+I then filtered only to include tweets from a one year time range, which resulted in 7522 observations and the following activity by account:
+```{r, include=TRUE, echo = TRUE, eval=FALSE}
+tmlsyr<-tmls%>%
+  filter(created_at>="2020-04-25")
+```
+```{r, include=TRUE, eval=TRUE}
+tmlsyrcount <- tmlsyr %>%
+  count(screen_name, sort=TRUE)
+tmlsyrcount%>%
+  kbl()%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE, position = "left")
+```
+
+# Timeseries 
+
+NC State is the leader in number of tweets for this past year. Let's look at the activity distribution with a `ts_plot` and `ggplot` histogram.  
+
+```{r, include=TRUE, echo = TRUE, eval=TRUE}
+##ts_plot by screen name
+  ts_plot(group_by(tmlsyr, screen_name), "months")
+```
+
+```{r, include=TRUE, echo = TRUE, eval=TRUE}
+## histogram with facet wrap
+ggplot(tmlsyr, aes(x = created_at, fill = screen_name)) +
+    geom_histogram(position = "identity", bins = 20, show.legend = FALSE) +
+    facet_wrap(~screen_name, ncol = 1)  
+```
+We can see that each university account has a steady flow of tweets that averages out to the following in this year time period:
+```{r, include=TRUE, echo=FALSE, eval=TRUE}
+countweetsbymonth<-tmlsyr %>%
+  mutate(month = format(created_at, "%m"), year = format(created_at, "%Y")) %>%
+  group_by(screen_name, month, year)%>%
+  count(screen_name)
+
+countweetsbymonth2<-tmlsyr %>%
+  mutate(month = format(created_at, "%m"), year = format(created_at, "%Y")) %>%
+  group_by(month, year)%>%
+  count(screen_name)
+  
+averagetwt<-countweetsbymonth2%>%
+    group_by(screen_name)%>%
+    summarise(avg= round(mean(n),0))%>%
+    arrange(desc(avg))
+```
+```{r, include=TRUE, eval=TRUE}
+averagetwt%>%
+  kbl()%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE, position = "left")
+```
