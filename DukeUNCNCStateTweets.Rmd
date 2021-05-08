@@ -1,0 +1,751 @@
+---
+title: "Comparing Duke, UNC, and NC State Twitter Activity: A Text Mining Approach"
+date: "`r Sys.Date()`"
+author: "[Soraya Campbell](https://twitter.com/sorayaworldwide)"
+output:
+  rmdformats::downcute:
+    self_contained: true
+    thumbnails: true     
+    lightbox: true     
+    gallery: false     
+    highlight: kate    
+    code_folding: show     
+    code_download: true
+    use_bookdown: true
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=FALSE,
+	             cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment='',
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+```
+
+```{r, include=FALSE}
+library(tidyverse)
+library(tidyr)
+library(tidytext) 
+library(dplyr)
+library(wordcloud2) 
+library(forcats)
+library(remotes)
+library(ggplot2)
+library(kableExtra)
+library(readxl)
+library(rtweet)
+library(tweetrmd)
+library(gganimate)
+library(ggwordcloud)
+library(stringr)
+library(scales)
+library(lubridate)
+library(purrr)
+library(broom)
+library(vader)
+library(htmlwidgets)
+library(webshot)
+library(formatR)
+##data
+tmlsyr<-read_xlsx("UniversityTweets.xlsx")
+```
+
+# Twitter activity of Duke, UNC, and NC State
+
+[Duke University](https://twitter.com/DukeU), [NC State University](https://twitter.com/NCState), and [UNC-Chapel Hill](https://twitter.com/UNC) are three [research I universities](https://carnegieclassifications.iu.edu/classification_descriptions/basic.php) in central North Carolina. Together they comprise of the 'Research Triangle,' which, together with the [Research Triangle Park](https://www.rtp.org/) and other area universities, drive innovation and growth in the region. While these three universities share the research I university designation, they are distinct in many aspects. Can we discern this distinction by their Twitter activity? What topics do they engage in the most? Is there any overlap?
+
+**In this walk-through, we'll explore:**
+
+-   When and how often do each of these accounts tweet
+-   What do these schools tweet about the most? Is there is a difference between schools?
+-   Which words are more likely to be retweeted or favorited between these accounts?
+-   Do certain words share a similar sentiment?
+
+Let's find out!
+
+```{r}
+include_tweet("https://twitter.com/EshipAtDuke/status/1385567661162213376?s=20") 
+```
+
+# Getting the Data
+
+Using the `rtweet` package, I pulled the latest 3200 tweets from each university's main twitter account.
+
+```{r, include=TRUE, echo = TRUE, eval=FALSE}
+##get timelines
+tmls <- get_timelines(c("dukeu", "ncstate", "unc"), n = 3200)
+glimpse(tmls)
+```
+
+I then filtered only to include tweets from a one year time range, which resulted in 7522 observations and the following activity by account:
+
+```{r, include=TRUE, echo = TRUE, eval=FALSE}
+tmlsyr<-tmls%>%
+  filter(created_at>="2020-04-25")
+```
+
+```{r, include=TRUE, eval=TRUE}
+tmlsyrcount <- tmlsyr %>%
+  count(screen_name, sort=TRUE)
+tmlsyrcount%>%
+  kbl(caption = "Number of tweets between Apr 20-Apr 21 by account")%>%
+  row_spec(0, bold=TRUE)%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE, position = "left")
+```
+
+# Timeseries
+
+NC State is the leader in number of tweets for this past year. Let's look at the activity distribution with a `ts_plot` and `ggplot` histogram.
+
+```{r, include=TRUE, echo = TRUE, eval=TRUE, fig.cap="Time series plot of Twitter Activity"}
+##ts_plot by screen name
+  ts_plot(group_by(tmlsyr, screen_name), "months")
+```
+
+```{r, include=TRUE, echo = TRUE, eval=TRUE, fig.cap="Histogram of Twitter activity"}
+## histogram with facet wrap
+ggplot(tmlsyr, aes(x = created_at, fill = screen_name)) +
+    geom_histogram(position = "identity", bins = 20, show.legend = FALSE) +
+    facet_wrap(~screen_name, ncol = 1)  
+```
+
+We can see that each university account has a steady flow of tweets that averages out to the following per month in this year time period:
+
+```{r, include=TRUE, echo=FALSE, eval=TRUE}
+countweetsbymonth<-tmlsyr %>%
+  mutate(month = format(created_at, "%m"), year = format(created_at, "%Y")) %>%
+  group_by(screen_name, month, year)%>%
+  count(screen_name)
+
+countweetsbymonth2<-tmlsyr %>%
+  mutate(month = format(created_at, "%m"), year = format(created_at, "%Y")) %>%
+  group_by(month, year)%>%
+  count(screen_name)
+  
+averagetwt<-countweetsbymonth2%>%
+    group_by(screen_name)%>%
+    summarise(avg= round(mean(n),0))%>%
+    arrange(desc(avg))
+```
+
+```{r, include=TRUE, eval=TRUE}
+averagetwt%>%
+  kbl(caption = "Average number of tweets per month by account")%>%
+  row_spec(0, bold=TRUE)%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE, position = "left")
+
+```
+
+Seems like NC State has been a busy bee, with significant activity in the months of September and March that skews its average upward. What's going on here?
+
+By analyzing the word counts per month for NC State, we can see that the term [\#GivingPack](https://campaign.ncsu.edu/featured-series/giving-pack/) dominated for these two months. This makes sense since this is a fundraising campaign which is conducted heavily via social media and some donations were matched depending on Twitter activity.
+
+```{r, include=TRUE, eval=TRUE}
+NCStateMarch<-tmlsyr%>%
+  filter(screen_name=="NCState", created_at>="2021-03-01" & created_at <="2021-03-31")%>%
+  select(text, created_at)
+
+NCStateMarch%>%
+  filter(grepl("#GivingPack", text))%>%
+  sample_n(2)%>%
+  kbl(caption = "Sample NC State March Tweets")%>%
+  row_spec(0, bold=TRUE)%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE, position = "left")
+
+include_tweet("https://twitter.com/helen_phifer/status/1375082885380726790")
+```
+
+```{r, include=TRUE, eval=TRUE}
+NCStateSeptember<-tmlsyr%>%
+  filter(screen_name=="NCState", created_at>="2020-09-01" & created_at <="2020-09-30")%>%
+  select(text, created_at)
+
+NCStateSeptember%>%
+  filter(grepl("#GivingPack", text))%>%
+  sample_n(2)%>%
+  kbl(caption = "Sample NC State September Tweets")%>%
+  row_spec(0, bold=TRUE)%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE, position = "left")
+
+include_tweet("https://twitter.com/NCState/status/1306099283863756801")
+```
+
+We'll do an additional time series look when we get to the section [Comparing Word Usage].
+
+# Comparing Word Frequencies
+
+Now let's compare which words were used most frequently by each university. In particular, I am interested in seeing change in word frequencies over the year time span we are looking at. For this I will adapt the Twitter case study and code from [Julia Silge](https://twitter.com/juliasilge) and [David Robinson](https://twitter.com/drob)'s [Text Mining with R](https://www.tidytextmining.com/index.html).
+
+With Twitter data, some form of clean-up is usually necessary, especially before tokenizing text. Whether you remove hashtags, mentions (\@)'s, emojis, or other special characters will depend on your purpose. Here, we'll use the specialized "tweets" tokenizer to deal with Twitter text, which retains hashtags and mentions of usernames with the \@ symbol. The code below removes retweets so that the data is only of tweets these accounts wrote themselves. Some special characters were removed as well.
+
+```{r include=TRUE, echo = TRUE, eval=TRUE}
+remove_reg <- "&amp;|&lt;|&gt;"
+tidy_tweets <- tmlsyr %>% 
+  filter(!str_detect(text, "^RT")) %>%
+  mutate(text = str_remove_all(text, remove_reg)) %>%
+  unnest_tokens(word, text, token = "tweets") %>%
+  filter(!word %in% stop_words$word,
+         !word %in% str_remove_all(stop_words$word, "'"),
+         str_detect(word, "[a-z]"))
+```
+
+Now we can calculate word frequencies for each university's account.
+
+```{r include=TRUE, echo = TRUE, eval=TRUE}
+frequency <-tidy_tweets%>%
+  group_by(screen_name)%>%
+  count(word, sort=TRUE)%>%
+  left_join(tidy_tweets %>%
+              group_by(screen_name)%>%
+              summarise(total=n()))%>%
+  mutate(freq = n/total)
+```
+
+Then the data is pivoted wider to get it ready to plot.
+
+```{r include=TRUE, echo = TRUE, eval=TRUE}
+
+frequency <- frequency %>% 
+  select(screen_name, word, freq) %>% 
+  pivot_wider(names_from = screen_name, values_from = freq) %>%
+  arrange(NCState, UNC, DukeU)
+```
+
+These plots compare word usage between Duke University, NC State, and UNC-Chapel Hill. Words near the line are used with about equal frequency between the universities whereas words further away from it are used much more by that university than the other.
+
+```{r, include=TRUE, echo = FALSE, eval=TRUE, fig.cap="Word Frequency between NCState and UNC Twitter accounts"}
+ggplot(frequency, aes(NCState, UNC)) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.25, height = 0.25) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  geom_abline(color = "red")
+```
+
+```{r, include=TRUE, echo = FALSE, eval=TRUE, fig.cap="Word Frequency between UNC and DukeU Twitter accounts"}
+ggplot(frequency, aes(UNC, DukeU)) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.25, height = 0.25) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  geom_abline(color = "red") 
+```
+
+```{r, include=TRUE, echo = FALSE, eval=TRUE, fig.cap="Word Frequency between NCState and DukeU Twitter accounts"}
+ggplot(frequency, aes(NCState, DukeU)) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.25, height = 0.25) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  geom_abline(color = "red")  
+```
+
+You can see that there are some common shared words between these universities:
+
+-   student/students\
+-   covid19\
+-   community\
+-   care/support
+
+These words make sense since this timeframe of tweets coincides with the covid19 pandemic. Universities made many efforts to support students during these challenging times.
+
+Although I won't be performing a formal [topic model analysis](https://sicss.io/2020/materials/day3-text-analysis/topic-modeling/rmarkdown/Topic_Modeling.html) of these tweets, I think we can safely say that covid19 was a 'topic' shared among these universities throughout this year. We will come back to this particular topic when we do our [Sentiment Analysis].
+
+To round out our look at word frequencies, let's find words that have changed in frequency at a moderately significant level in each account's tweets. This can help us determine 'trending' words.
+
+```{r include=TRUE, echo = FALSE, eval=TRUE}
+words_by_time <- tidy_tweets %>%
+  filter(!str_detect(word, "^@")) %>%
+  mutate(time_floor = floor_date(created_at, unit = "1 month")) %>%
+  count(time_floor, screen_name, word) %>%
+  group_by(screen_name, time_floor) %>%
+  mutate(time_total = sum(n)) %>%
+  group_by(screen_name, word) %>%
+  mutate(word_total = sum(n)) %>%
+  ungroup() %>%
+  rename(count = n) %>%
+  filter(word_total > 30)
+
+nested_data <- words_by_time %>%
+  nest(-word, -screen_name) 
+
+nested_models <- nested_data %>%
+  mutate(models = map(data, ~ glm(cbind(count, time_total) ~ time_floor, ., 
+                                  family = "binomial")))
+
+slopes <- nested_models %>%
+  mutate(models = map(models, tidy)) %>%
+  unnest(cols = c(models)) %>%
+  filter(term == "time_floor") %>%
+  mutate(adjusted.p.value = p.adjust(p.value))
+
+top_slopes <- slopes %>% 
+  filter(adjusted.p.value < 0.05)
+```
+
+```{r, include=TRUE, echo = FALSE, eval=TRUE, fig.cap="Trending words in DukeU’s tweets"}
+words_by_time %>%
+  inner_join(top_slopes, by = c("word", "screen_name")) %>%
+  filter(screen_name == "DukeU") %>%
+  filter(word != "duke") %>%
+  ggplot(aes(time_floor, count/time_total, color = word)) +
+  geom_line(size = 1.3) +
+  labs(x = NULL, y = "Word frequency")
+```
+
+Significant here is the slope of \#covid19 which started off very frequently at the beginning of the pandemic, trended down, and then saw a moderate rise in December. Also the inverse occurred with the term 'vaccine' as it saw its prominence rise in December when news of covid19 vaccines started to become available.
+
+```{r, include=TRUE, echo = FALSE, eval=TRUE, fig.cap="Trending words in NCState’s tweets"}
+words_by_time %>%
+  inner_join(top_slopes, by = c("word", "screen_name")) %>%
+  filter(screen_name == "NCState") %>%
+  ggplot(aes(time_floor, count/time_total, color = word)) +
+  geom_line(size = 1.3) +
+  labs(x = NULL, y = "Word frequency")
+```
+
+There's alot going on in this graph, but \#givingpack features prominently, starting high in September, falling down precipitously until March when it picks back up accordingly with our discovery of their fundraising campaigns those two months.
+
+```{r, include=TRUE, echo = FALSE, eval=TRUE, fig.cap="Trending words in UNC’s tweets"}
+words_by_time %>%
+  inner_join(top_slopes, by = c("word", "screen_name")) %>%
+  filter(screen_name == "UNC") %>%
+  ggplot(aes(time_floor, count/time_total, color = word)) +
+  geom_line(size = 1.3) +
+  labs(x = NULL, y = "Word frequency")
+```
+
+Again, alot going on, but of note, and makes sense, is the term/hashtag \#uncgrad which started off high May 2020, coinciding with Spring graduation and then falling off until December (Fall graduation). Following this trend, it would have picked back up again May 2021. The term 'Fall' rising in August coincides with the beginning of the Fall term, and 'testing' could be because of changes in testing protocols for covid19.
+
+# Comparing Word Usage
+
+Now let's see what words were being tweeted about the most. I'll explore this in two ways:
+
+1.  Simple word counts to analyze usage\
+2.  Term frequency/inverse document frequency (tf-idf) values to analyze which words are more likely to come from one account versus the other
+
+First, let's do a simple word count of the top twenty words that are in the corpus.
+
+```{r, include=TRUE, echo = FALSE, eval=TRUE, fig.cap="Word Counts for Duke, UNC, and NC State"}
+
+tweets_count <-count(tidy_tweets, word, sort = TRUE)
+
+tweets_count%>%
+  top_n(20)%>%
+  mutate(word = reorder(word, n))%>%
+  ggplot(aes(n, word, fill=n))+
+  geom_col()
+
+```
+
+Next, let's use `wordcloud` to help us visualize these terms per university.\
+![](https://media.giphy.com/media/3o7TKUZfJKUKuSWTZe/giphy.gif)
+
+Here's Duke, whose name features prominently in the visualization along with 'students,' 'covid19,' 'pandemic,' 'faculty,' 'research,' 'health,' among many other terms.
+
+```{r, include=TRUE, echo = FALSE, eval=TRUE, fig.cap="Word Cloud Duke University's most tweeted terms"}
+ Duketweets_count <-tidy_tweets%>%
+  filter(screen_name=="DukeU")%>%
+  count(word, sort=TRUE)
+
+wordcloud2(Duketweets_count, size=1.6, color=rep_len(c("blue", "grey"), nrow(Duketweets_count)))
+```
+
+Now here's NC State, where their motto 'think and do' features prominently along with the word 'students.' Also many of the university's individual colleges' or departments' twitter screen names are displayed here. You can also see the words 'gift,' 'support,' 'scholarship,' 'giving,' 'helping,' 'donors,' and of course, 'wolfpack' featured here.
+
+```{r, include=TRUE, echo = FALSE, eval=FALSE, fig.cap="Word Cloud NC State University's most tweeted terms"}
+webshot::install_phantomjs()
+
+ NCStatetweets_count <-tidy_tweets%>%
+  filter(screen_name=="NCState")%>%
+  count(word, sort=TRUE)
+
+hw=wordcloud2(NCStatetweets_count, size=1.6, color=rep_len(c("red", "black"), nrow(NCStatetweets_count)))
+
+saveWidget(hw, "1.html", selfcontained = F)
+webshot::webshot("1.html", "1.png", vwidth = 700, vheight = 500, delay = 10)
+```
+![NC State Wordcloud](NC State wordcloud Rplot.png)
+
+And finally, here's UNC with 'tar' 'heels' front and center, which is what they call themselves, along with their hashtag '\#unc,' 'students,' 'covid19,' 'pandemic,' and 'community' being featured.
+
+```{r, include=TRUE, echo = FALSE, eval=FALSE, fig.cap="Word Cloud UNC-Chapel Hill most tweeted terms"}
+UNCtweets_count <-tidy_tweets%>%
+  filter(screen_name=="UNC")%>%
+  count(word, sort=TRUE)
+
+hw2=wordcloud2(UNCtweets_count, size=1.6, color=rep_len(c("cyan", "grey"), nrow(UNCtweets_count)))
+
+saveWidget(hw2, "2.html", selfcontained = F)
+webshot::webshot("2.html", "2.png", vwidth =700, vheight =500, delay = 10)
+```
+![UNC WordCloud](UNC word cloud Rplot.png)
+
+If we want to take this analysis further, we can add `gganimate` to our plot to view most frequently tweeted words over time.
+
+```{r, include=TRUE, echo = TRUE, eval=TRUE}
+words_by_time <- tidy_tweets %>%
+  filter(!str_detect(word, "^@")) %>%
+  mutate(time_floor = floor_date(created_at, unit = "1 month")) %>%
+  count(time_floor, screen_name, word) %>%
+  group_by(screen_name, time_floor) %>%
+  mutate(time_total = sum(n)) %>%
+  group_by(screen_name, word) %>%
+  mutate(word_total = sum(n)) %>%
+  ungroup() %>%
+  rename(count = n) %>%
+  filter(word_total > 30)
+```
+
+```{r, include=TRUE, echo = TRUE, eval=FALSE, fig.cap="Example of gganimate time series"}
+Duketime <-words_by_time%>%
+  filter(screen_name=="DukeU")
+
+gg <- Duketime %>%
+  ggplot(aes(label = word, size=count)) +
+  geom_text_wordcloud(area_corr = TRUE) +
+  scale_size_area(max_size = 20)+
+  theme_minimal()
+gg+transition_time(time_floor) +
+  labs(title = "@DukeU's most tweeted words: {frame_time}")
+```
+
+![](gg_Duke.gif "Duke University Word Cloud Time Series")
+
+![](gg_NCState.gif "NC State World Cloud Time Series")
+
+![](gg_UNC.gif "UNC Worldcloud Time Series")
+
+With the help of worldcloud, these time series plots give us a good picture of what terms occurred most frequently throughout the year. Again, covid19 and words having to do with the pandemic are common among all the universities throughout the year in these visualizations.
+
+## Term-frequency, inverse document frequency
+
+So, we've seen alot of overlap of terms between these universities. What is unique about what they tweet? Let's calculate the tf-idf values to find out:
+
+```{r, include=TRUE, echo = FALSE, eval=TRUE, fig.cap="Unique words used by each university"}
+  
+tmlsyr_words <- tmlsyr %>%
+unnest_tokens(word, text) %>%
+count(screen_name, word, sort = TRUE)
+
+total_words <-tmlsyr_words%>%
+  group_by(screen_name) %>%
+  summarise(total = sum(n))
+
+tmlsyr_totals <- left_join(tmlsyr_words, total_words)
+
+tmlsyr_tf_idf <- tmlsyr_totals %>%
+  bind_tf_idf(word, screen_name, n)
+  
+  tmlsyr_tf_idf %>%
+  group_by(screen_name) %>%
+  slice_max(tf_idf, n = 10) %>%
+  ungroup() %>%
+  mutate(screen_name=as.factor(screen_name),
+         word=reorder_within(word, tf_idf, screen_name)) %>%
+  ggplot(aes(word, tf_idf, fill = screen_name)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~screen_name, ncol = 3, scales = "free") +
+  coord_flip() +
+  scale_x_reordered() +
+  labs(title = "Top 10 Words Unique to Each University's Tweets Apr 2020- Apr 2021", x = "tf-idf value", y = NULL)
+```
+
+You can see that for Duke, they most uniquely tweet about 'dukehealth,' 'engineering,' the blue 'devils,' their mascot, the medical school and other departments that feature prominently in their research output. 'Dukestudents' also rounds out the top 10 words unique to Duke.
+
+For NC State, as we have seen, '\#givingpack' is most uniquely identified with them as their big fundraising event that is so active on Twitter/social media. 'Wolfpack,' their mascot, 'thinkanddo,' their motto, and other NC State departments round out the list.
+
+For UNC, their moniker, the 'tar' 'heels,' and their hashtag '\#gdtbath' (or good day to be a Tar Heel) features prominently.
+
+# Retweets and Favorites
+
+Now let's see how these accounts interact with each other via mentions and also look at their retweet and favorites activity. Initially, I thought because of their shared character as research universities and some of the synergies borne from that, they would be pretty tight Twitter pals. It turns out, not so much.
+
+First let's see whose account has the most retweets:
+
+```{r include=TRUE, echo = FALSE, eval=TRUE}
+
+tidy_tweetsrefav <- tmlsyr %>% 
+  filter(!str_detect(text, "^(RT|@)")) %>%
+  mutate(text = str_remove_all(text, remove_reg)) %>%
+  unnest_tokens(word, text, token = "tweets", strip_url = TRUE) %>%
+  filter(!word %in% stop_words$word,
+         !word %in% str_remove_all(stop_words$word, "'"))
+
+totalsrefav <- tidy_tweetsrefav %>% 
+  group_by(screen_name, status_id) %>% 
+  summarise(rts = first(retweet_count)) %>% 
+  group_by(screen_name) %>% 
+  summarise(total_rts = sum(rts))
+```
+
+```{r include=TRUE, echo = FALSE, eval=TRUE}
+totalsrefav%>%
+  arrange(desc(total_rts))%>%
+  kbl(caption = "Total Number of retweets by account")%>%
+  row_spec(0, bold=TRUE)%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE, position = "left")
+```
+
+```{r, include=FALSE, echo = FALSE, eval=TRUE}
+word_by_rts <- tidy_tweetsrefav %>% 
+  group_by(status_id, word, screen_name) %>% 
+  summarise(rts = first(retweet_count)) %>% 
+  group_by(screen_name, word) %>% 
+  summarise(retweet_count = median(rts), uses = n()) %>%
+  left_join(totalsrefav) %>%
+  filter(retweet_count != 0) %>%
+  ungroup()
+
+word_by_rts%>%
+  filter(uses >= 5) %>%
+  arrange(desc(retweet_count))
+```
+
+What words were in the tweets that were the most retweeted?
+
+```{r, include=TRUE, echo = FALSE, eval=TRUE}
+## highest median retweet
+  word_by_rts %>%
+  filter(uses >= 5) %>%
+  group_by(screen_name) %>%
+  slice_max(retweet_count, n = 10) %>% 
+  arrange(retweet_count) %>%
+  ungroup() %>%
+  mutate(word = factor(word, unique(word))) %>%
+  ungroup() %>%
+  ggplot(aes(word, retweet_count, fill = screen_name)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ screen_name, scales = "free", ncol = 3) +
+  coord_flip() +
+  labs(x = NULL, 
+       y = "Median # of retweets for tweets containing each word")
+```
+
+It seems like retweets are dominated by terms related to sports activity. Also Duke's retweet of Coach K's speech about \#blacklivesmatter garnered many retweets. ✊🏿
+
+```{r}
+include_tweet("https://twitter.com/DukeMBB/status/1299075233412911105?s=20")
+```
+
+Now let's do favorites:
+
+```{r include=TRUE, echo = FALSE, eval=TRUE, fig.cap="Median Favorites"}
+## favorites
+totalsrefav2 <- tidy_tweets %>% 
+  group_by(screen_name, status_id) %>% 
+  summarise(favs = first(favorite_count)) %>% 
+  group_by(screen_name) %>% 
+  summarise(total_favs = sum(favs))
+
+word_by_favs <- tidy_tweets %>% 
+  group_by(status_id, word, screen_name) %>% 
+  summarise(favs = first(favorite_count)) %>% 
+  group_by(screen_name, word) %>% 
+  summarise(favorite_count = median(favs), uses = n()) %>%
+  left_join(totalsrefav2) %>%
+  filter(favorite_count != 0) %>%
+  ungroup()
+
+  word_by_favs %>%
+  filter(uses >= 5) %>%
+  group_by(screen_name) %>%
+  slice_max(favorite_count, n = 10) %>% 
+  arrange(favorite_count) %>%
+  ungroup() %>%
+  mutate(word = factor(word, unique(word))) %>%
+  ungroup() %>%
+  ggplot(aes(word, favorite_count, fill = screen_name)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ screen_name, scales = "free", ncol = 3) +
+  coord_flip() +
+  labs(x = NULL, 
+       y = "Median # of favorites for tweets containing each word")
+```
+
+```{r, include=FALSE, echo = FALSE, eval=TRUE}
+##remove stop words from totals
+
+tmlsyr_nostop<-tmlsyr_totals%>%
+  anti_join(stop_words)%>%
+  filter(word !="t.co")%>%
+  filter(word != "https")
+```
+
+Interesting here is the term 'remdesivir', which is an [anti-viral drug](https://sph.unc.edu/sph-news/remdesivir-developed-at-unc-chapel-hill-proves-effective-against-covid-19-in-niaid-human-clinical-trials/) developed through a UNC-Chapel Hill partnership, which was used in the fight against the covid19 virus. Otherwise, the favorited terms had alot to do about campus life, sports, places on campus, and my personal favorite, [Duke Gardens](https://gardens.duke.edu/).
+
+How about top mentions for each university? As you can see, it's very university-centric. Most mentions are to other departments/units within the same university. The top mention for all of them, of course, is to itself :-)
+
+```{r include=TRUE, echo = FALSE, eval=TRUE}
+## top mentions
+top_mentions<-tmlsyr %>% 
+  group_by(screen_name)%>%
+  unnest_tokens(mentions, text, "tweets", to_lower = FALSE) %>%
+  filter(str_detect(mentions, "^@")) %>%  
+  count(mentions, sort = TRUE)
+  
+Duke_topmentions<-top_mentions%>%
+  filter(screen_name=="DukeU")%>%
+  top_n(5)
+
+Duke_topmentions%>%
+  kbl(caption = "Top mentions for DukeU")%>%
+  row_spec(0, bold=TRUE)%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE, position = "left")
+  
+
+UNC_topmentions<-top_mentions%>%
+  filter(screen_name=="UNC")%>%
+  top_n(5)
+
+UNC_topmentions%>%
+  kbl(caption = "Top mentions for UNC")%>%
+  row_spec(0, bold=TRUE)%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE, position = "left")
+
+
+NCState_topmentions<-top_mentions%>%
+  filter(screen_name=="NCState")%>%
+  top_n(5)
+
+NCState_topmentions%>%
+kbl(caption = "Top mentions NC State")%>%
+  row_spec(0, bold=TRUE)%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE, position = "left")
+```
+
+And finally, let's see how many times they mention each other:
+
+```{r include=TRUE, echo = FALSE, eval=TRUE}
+DukeNCStatemention<-top_mentions%>% #4
+  filter(screen_name=="DukeU" & mentions=="@NCState")
+
+NCStateDukemention <-top_mentions%>% # 1 time
+  filter(screen_name=="NCState" & mentions=="@DukeU")
+
+DukeUNCmention <-top_mentions%>% #9 times 
+  filter(screen_name=="DukeU" & mentions=="@UNC")
+
+UNCDukemention <- top_mentions%>% # 5 times 
+  filter(screen_name=="UNC" & mentions=="@DukeU")
+
+NCStateuncmention <- top_mentions%>% # 3 time
+  filter(screen_name=="NCState" & mentions=="@UNC")
+
+UNCNCState <-top_mentions%>% # 2 time
+  filter(screen_name=="UNC" & mentions=="@NCState")
+
+Allmentions<-rbind.data.frame(DukeNCStatemention, NCStateDukemention, DukeUNCmention, UNCDukemention, NCStateuncmention, UNCNCState)
+
+Allmentions%>%
+kbl(caption = "Mentions of each others' accounts by university")%>%
+  row_spec(0, bold=TRUE)%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE, position = "left")
+```
+
+# Sentiment Analysis
+
+The last analysis we'll do is a sentiment analysis on a shared topic. As we've seen throughout our dive into the data, covid19 featured prominently in the tweets of each of the universities. Indeed, the covid19 pandemic shaped the year snapshot that we are analyzing. Let's analyze the sentiment shared amongst the universities by time in regards to covid19. We'll use the [`vader`](https://cran.r-project.org/web/packages/vader/index.html) package to make our lives easier, since it doesn't necessitate tokenizing of text. It's especially effective on social media data, such as Twitter, and can analyze the sentiments from emoticons as well! 😁\
+![](happyfacevader.jpg){width="300"}\
+First, let's count the number of tweets per university that mentioned the pandemic. Here we'll use the `grepl` function to pull out tweets with the terms we need:
+
+```{r include=TRUE, echo = TRUE, eval=FALSE}
+vader_tmlsyr <-vader_df(tmlsyr$text)
+
+
+joinvader_tmlsyr <-tmlsyr %>%
+  inner_join(vader_tmlsyr, by="text")
+
+vader_results<-joinvader_tmlsyr%>%
+  select(screen_name, created_at, text, compound, pos, neu, neg, but_count)%>%
+  mutate(sentiment = ifelse(compound > 0, "positive",
+                            ifelse(compound <0, "negative", "neutral")))
+```
+
+```{r include=TRUE, echo = TRUE, eval=FALSE}
+##covid sentiment
+vader_covid <- vader_results %>%
+  filter(grepl("(?i)COVID|corona|virus|pandemic", text))
+```
+
+Now let's use `lubridate` to help us do our time series:
+
+```{r include=TRUE, echo = TRUE, eval=FALSE}
+#lubridate
+vader_date <-vader_covid%>%
+  mutate(year_month = floor_date(created_at, "months") %>% ymd())
+
+vader_date_summarise<-vader_date%>%
+  group_by(screen_name, year_month)%>%
+  summarise(mean= mean(compound))
+
+##covid count
+covid_plot_count<-vader_date%>%
+  group_by(screen_name, year_month)%>%
+  count(screen_name)
+#plot covid tweets count
+ggplot(covid_plot_count, aes(x=year_month, y=n,))+
+  geom_line(aes(color=screen_name))
+```
+
+![Time Series Plot of tweets related to Covid19](covid%20related%20tweets%20ts%20Rplot.png)
+
+```{r include=TRUE, echo = FALSE, eval=FALSE, fig.cap="Vader Sentiment Plot: Covid19 and 3 area universities"}
+vader_date_summarise %>%
+ggplot(aes(x=year_month, y=mean)) +
+  geom_point(aes(color=screen_name))+
+  geom_smooth(method="auto")+
+  labs(x=NULL, y="Mean Compound Score", title="Tweets related to Covid-19 and the 
+       Pandemic: Vader Sentiment Score over time for Duke, UNC, and NC State", caption="Compound Score:
+       -1 (most extreme negative) and +1 (most extreme positive)")
+```
+
+![Sentiment Score for Tweets Related to Covid19](Sentiment%20Analysis%20Covid19%20Rplot.png)
+
+The compound score for the sentiment is computed by summing the valence scores of each word in the lexicon, adjusted according to the rules, and then normalized to be between -1 (most extreme negative) and +1 (most extreme positive).
+
+The results of the sentiment analysis are interesting. The sentiment skews positive for all three universities overall. This makes some sense in the context of these main accounts tweeting mainly informational positions, like policies or directives for their campus community, or tweets related to research ongoing in this area - most likely research gains. You can see a slight bow curve from April 2020, the beginning of the pandemic, to April 2021. Duke and NC State had their negative moments in August 2020 and November 2020 respectively. An outlier is UNC in July 2020 with an almost 0.6 compound score.
+
+What's also interesting to note, is that the sentiment scores during April 2021 seemed to be the most homogenous than that of any other time in the year. As vaccines are administered and restrictions loosened on campuses, I'll be curious to see how these sentiment scores evolve.
+
+And because I'm curious, and these universities share the research I designation, let's look at the twitter activity and sentiment score of tweets related to **research**:
+
+![Time Series Plot of tweets related to Research](Research%20word%20count%20Rplot.png)\
+The activity for research is a little less than that relating to covid19. UNC had alot of activity October 2020.
+
+Now let's look at the sentiment score:
+
+\
+![Sentiment Score for Tweets Related to Research](Sentiment%20Research%20Rplot.png)
+
+It's pretty positive, with an overall upward slope at the end. Again, UNC trends positive. Duke's sentiment score in regards to research trend downward, which is interesting. After inspecting the tweets, it may be that the issues they are researching might skew the sentiment negative, i.e. diseases, social problems, etc.
+
+# Discussion
+
+The central question that I set out for this analysis is what is unique to each university in the way they carry out their Twitter activity? Are there certain characteristics that define each university? Our analysis yielded some common results:
+
+-   These universities have similar amounts of tweets per month on average, with the exception of NC State when they are conducting their \#givingpack campaign
+-   There were many common words expressed between the accounts, especially having to do with the pandemic, which dominated the year snapshot
+-   These universities do not mention each other often, rather they amplify the accounts of those belonging to their university (departments, etc.)
+
+As for differences, each university's focus came out in analyzing the tweets. For example, Duke is known for their medical system and research in health and medicine so it is natural for them to tweet often about this. NC State's fundraising campaign and their college of engineering features prominently and they really engage with students, alumni, and their various colleges/departments on campus on Twitter. UNC tended to focus on their identity as a "Tarheel" and was the university that spoke more towards sports than the others, even though the others have strong athletics.
+
+We must also remember the limitations of this analysis which mainly lie in the exploration of one social media platform to extrapolate the overall considerations of each university. This analysis can only offer a snapshot of a wider communications network that each university employs. Also, each method of text analysis has its pros/cons as to the accuracy or efficacy of the model. However, taken altogether, these methods have provided us a glimpse into our research question.
+
+# Final Thoughts
+
+This analysis gave us a good picture of the characteristics of each university's main Twitter account. They do have some things in common, and the breath of what was discussed in their accounts could be because of their profile of being large, research I universities. However, each sought to amplify their own unique strengths and what makes them distinct in terms of student focus, their academic departments, research, and other campus activities.
+
+# About Me
+
+By day, I am Assistant Director for the [Global Education Office](https://globaled.duke.edu/) at Duke University. By (late) night, I mess around with data. Follow me on Twitter [\@sorayaworldwide](https://twitter.com/sorayaworldwide)
+
+![](https://media.giphy.com/media/JWuBH9rCO2uZuHBFpm/giphy.gif)
